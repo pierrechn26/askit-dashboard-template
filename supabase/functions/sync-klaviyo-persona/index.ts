@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { loadTenantConfig } from "../_shared/loadTenantConfig.ts";
 import { reportEdgeFunctionError } from "../_shared/reportEdgeFunctionError.ts";
 
 const corsHeaders = {
@@ -147,6 +148,44 @@ Deno.serve(async (req) => {
     const itemsEnrichmentProps: Record<string, unknown> = {};
     const usePrefix = (items?.length ?? 0) > 1;
 
+    // Load tenant config once for column_labels_mapping + klaviyo_list_id
+    const tenantConfig = await loadTenantConfig();
+    const columnLabelsMapping = (tenantConfig.column_labels_mapping ?? {}) as Record<string, {
+      label?: string;
+      value_mapping?: Record<string, string>;
+    }>;
+
+    function translateProp(
+      key: string,
+      value: unknown
+    ): { key: string; value: unknown } | null {
+      if (value === null || value === undefined || value === "") return null;
+
+      const mapping = columnLabelsMapping[key];
+      const translatedKey = mapping?.label ?? key;
+      const valueMapping = mapping?.value_mapping;
+
+      if (typeof value === "boolean") {
+        return { key: translatedKey, value: value ? "Oui" : "Non" };
+      }
+
+      if (Array.isArray(value)) {
+        const hasObject = value.some((v) => v !== null && typeof v === "object");
+        if (hasObject) return null;
+        const translated = value
+          .filter((v) => v !== null && v !== undefined && v !== "")
+          .map((v) => (valueMapping && valueMapping[String(v)]) || String(v));
+        if (translated.length === 0) return null;
+        return { key: translatedKey, value: translated.join(",") };
+      }
+
+      if (typeof value === "object") return null;
+
+      const strVal = String(value);
+      const translatedValue = (valueMapping && valueMapping[strVal]) || strVal;
+      return { key: translatedKey, value: translatedValue };
+    }
+
     (items || []).forEach((item, index) => {
       const prefix = usePrefix ? `item_${index + 1}_` : "";
       const meta = (item.item_metadata || {}) as Record<string, unknown>;
@@ -171,20 +210,10 @@ Deno.serve(async (req) => {
         if (value === null || value === undefined) continue;
         if (key.startsWith("_")) continue; // skip _raw, _recommendations, etc.
 
-        if (Array.isArray(value)) {
-          // Arrays of objects → skip; arrays of primitives → CSV join
-          const hasObject = value.some(
-            (v) => v !== null && typeof v === "object"
-          );
-          if (hasObject) continue;
-          itemsEnrichmentProps[`${prefix}${key}`] = value.join(",");
-          continue;
+        const translated = translateProp(key, value);
+        if (translated) {
+          itemsEnrichmentProps[`${prefix}${translated.key}`] = translated.value;
         }
-
-        if (typeof value === "object") continue; // skip nested blobs
-
-        itemsEnrichmentProps[`${prefix}${key}`] =
-          typeof value === "boolean" ? (value ? "Oui" : "Non") : value;
       }
     });
 
@@ -208,9 +237,6 @@ Deno.serve(async (req) => {
       gclid: session.gclid ?? null,
       fbclid: session.fbclid ?? null,
       result_url: session.result_url ?? null,
-
-      // Contact
-      user_name: session.user_name ?? null,
 
       // Persona & IA
       persona: personaFullLabel,
@@ -258,6 +284,7 @@ Deno.serve(async (req) => {
         attributes: {
           email: normalizedEmail,
           ...(phoneE164 && { phone_number: phoneE164 }),
+          ...(session.user_name && { first_name: session.user_name }),
           properties,
         },
         meta: {
@@ -329,14 +356,21 @@ Deno.serve(async (req) => {
 
     // 8. Subscriptions (best-effort, non-blocking). SMS only when we have a
     // properly normalized E.164 phone.
+    const klaviyoListId = tenantConfig.klaviyo_list_id;
+
+    if (!klaviyoListId) {
+      console.warn("[sync-klaviyo-persona] No klaviyo_list_id in tenant_config — profile imported but NOT added to any list");
+    }
+
     if (session.optin_email || (session.optin_sms && phoneE164)) {
       // deno-lint-ignore no-explicit-any
       const subscriptions: any = {};
+      const consentedAt = new Date().toISOString();
       if (session.optin_email) {
-        subscriptions.email = { marketing: { consent: "SUBSCRIBED" } };
+        subscriptions.email = { marketing: { consent: "SUBSCRIBED", consented_at: consentedAt } };
       }
       if (session.optin_sms && phoneE164) {
-        subscriptions.sms = { marketing: { consent: "SUBSCRIBED" } };
+        subscriptions.sms = { marketing: { consent: "SUBSCRIBED", consented_at: consentedAt } };
       }
 
       const subscribePayload = {
@@ -354,11 +388,13 @@ Deno.serve(async (req) => {
               }],
             },
           },
-          relationships: {
-            list: {
-              data: { type: "list", id: "TExMiq" },
+          ...(klaviyoListId ? {
+            relationships: {
+              list: {
+                data: { type: "list", id: klaviyoListId },
+              },
             },
-          },
+          } : {}),
         },
       };
 
