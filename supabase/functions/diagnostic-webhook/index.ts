@@ -635,7 +635,7 @@ async function handleNewFormat(supabase: SupabaseClient, payload: any) {
 
   if (Array.isArray(payloadItems) && payloadItems.length > 0) {
     const TOP_LEVEL_KEYS = new Set([
-      "item_index", "item_label",
+      "item_index", "item_label", "item_metadata",
       "dynamic_question_1", "dynamic_answer_1",
       "dynamic_question_2", "dynamic_answer_2",
       "dynamic_question_3", "dynamic_answer_3",
@@ -651,11 +651,19 @@ async function handleNewFormat(supabase: SupabaseClient, payload: any) {
         }
       }
 
+      // Priority: use c.item_metadata directly if it's a non-empty object,
+      // otherwise fall back to the reconstructed metadata bag.
+      const explicitMeta = c.item_metadata;
+      const hasExplicitMeta = explicitMeta
+        && typeof explicitMeta === "object"
+        && !Array.isArray(explicitMeta)
+        && Object.keys(explicitMeta).length > 0;
+
       return {
         session_id: session.id,
         item_index: c.item_index ?? 0,
         item_label: c.item_label ?? null,
-        item_metadata: Object.keys(metadata).length > 0 ? metadata : (c.item_metadata || {}),
+        item_metadata: hasExplicitMeta ? explicitMeta : (Object.keys(metadata).length > 0 ? metadata : {}),
         dynamic_question_1: c.dynamic_question_1 ?? null,
         dynamic_answer_1: c.dynamic_answer_1 ?? null,
         dynamic_question_2: c.dynamic_question_2 ?? null,
