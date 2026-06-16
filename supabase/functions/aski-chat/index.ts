@@ -304,7 +304,7 @@ serve(async (req) => {
       paginateQuery((from, to) =>
         supabase
           .from("diagnostic_sessions")
-          .select("id, persona_code, matching_score, adapted_tone, priorities_ordered, trust_triggers_ordered, routine_size_preference, content_format_preference, relationship, is_existing_client, number_of_children, engagement_score, conversion, selected_cart_amount, optin_email, optin_sms, duration_seconds, created_at")
+          .select("id, persona_code, matching_score, adapted_tone, priorities_ordered, trust_triggers_ordered, routine_size_preference, content_format_preference, relationship, is_existing_client, engagement_score, conversion, selected_cart_amount, optin_email, optin_sms, duration_seconds, created_at")
           .eq("status", "termine")
           .range(from, to)
       ),
