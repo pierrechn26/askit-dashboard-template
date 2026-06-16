@@ -13,14 +13,7 @@
 -- pg_cron and pg_net extensions are already enabled by earlier migrations
 -- (20260219005453, 20260329104714) so no extension setup is needed here.
 
-SELECT cron.schedule(
-  'scrape-commercial-facts-weekly',
-  '0 8 * * 1',
-  $$
-  SELECT net.http_post(
-    url := 'https://btkjdqelvvqmtguhhkdv.supabase.co/functions/v1/scrape-commercial-facts',
-    headers := '{"Content-Type": "application/json", "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJ0a2pkcWVsdnZxbXRndWhoa2R2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwODQ0MzUsImV4cCI6MjA4NTY2MDQzNX0.y7H-rbJ71lfGWncANeYcw3JNeWb1saGGYUkPFpkkdw8"}'::jsonb,
-    body := '{"source": "cron"}'::jsonb
-  ) AS request_id;
-  $$
-);
+-- NEUTRALIZED: cron.schedule commented out because it hardcodes the template
+-- project_ref (btkjdqelvvqmtguhhkdv). Crons must be created per-tenant via
+-- a dedicated idempotent migration with dynamic URL resolution.
+-- See: docs/RUNBOOK_ONBOARDING_CLIENT.md §4

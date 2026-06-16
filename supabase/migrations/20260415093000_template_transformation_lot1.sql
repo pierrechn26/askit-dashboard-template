@@ -465,7 +465,7 @@ INSERT INTO public.personas (
   0,
   NULL,
   0,
-  'seed_template',
+  'manual',
   NULL,
   NOW(),
   NOW()
