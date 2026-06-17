@@ -142,7 +142,10 @@ Sans ces 2 secrets Vault, les crons **skippent silencieusement** (warn dans les 
 - Côté diagnostic : helper `forwardToDashboard` qui POST vers `/functions/v1/diagnostic-webhook` (header `x-webhook-secret`), aux 2 régimes : ping `en_cours` à chaque étape + `termine` à la complétion.
 - ⚠️ Mapping schéma diagnostic → contrat dashboard (clé session, opt-ins, answers → items[0].item_metadata À PLAT).
 - ⚠️ `status` doit valoir exactement `"termine"` (déclenche scoring + Klaviyo).
-- ⚠️ Convention de matching Shopify : [À FIGER — `diag_session_id` ou `_diag_session`+`lim_session_id`].
+- ⚠️ **Convention de matching Shopify (FIGÉE)** : injecter `_diag_session` (= session_code) aux **2 endroits** :
+  - `line_items[].properties[]` : `{ name: "_diag_session", value: "<session_code>" }` (préfixe `_` = masqué côté client Shopify)
+  - `note_attributes[]` (cart attributes) : `{ name: "_diag_session", value: "<session_code>" }` (redondance robuste si une app tierce écrase les line item properties)
+  - Ne PAS utiliser `lim_session_id` (legacy LIM) ni `diag_session_id` (déviation Baûbo) pour les nouveaux clients.
 - ⚠️ Téléphone capté en E.164 à la source (react-phone-number-input, défaut FR).
 - ⚠️ Push `?r=<session_id>` dans l'URL résultats (replaceState) pour la restauration à l'actualisation.
 - ⚠️ `duration_seconds` : timestamp de départ partagé (sessionStorage) entre instances du hook.

@@ -117,6 +117,8 @@ Deno.serve(async (req) => {
     // --- Fallback: look in note_attributes (Étape 2 — dual-injection convention) ---
     // Certaines apps tierces (bundles, upsells) écrasent line_items[].properties[].
     // Le cart-level note_attributes fournit une redondance robuste.
+    // "lim_session_id" is LEGACY (rétrocompat anciens clients LIM/Ouate) — do NOT
+    // propagate to new clients. New clients must inject "_diag_session" only.
     if (!diagSession) {
       diagSession = (order.note_attributes || [])
         .find((attr: { name: string; value: string }) => attr.name === "lim_session_id" || attr.name === "_diag_session")
