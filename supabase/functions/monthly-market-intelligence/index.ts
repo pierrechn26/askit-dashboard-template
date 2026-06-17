@@ -764,7 +764,6 @@ serve(async (req) => {
         supabase
           .from("marketing_sources")
           .select("*")
-          .eq("project_id", PROJECT_ID)
           .eq("is_active", true)
           .range(from, to)
       );
@@ -833,7 +832,6 @@ serve(async (req) => {
         supabase
           .from("marketing_sources")
           .select("*")
-          .eq("project_id", PROJECT_ID)
           .eq("is_active", true)
           .range(from, to)
       );
