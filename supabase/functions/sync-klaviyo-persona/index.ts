@@ -155,6 +155,8 @@ Deno.serve(async (req) => {
       value_mapping?: Record<string, string>;
     }>;
 
+    const ASKIT_PREFIX = "AskIt — ";
+
     function translateProp(
       key: string,
       value: unknown
@@ -162,7 +164,7 @@ Deno.serve(async (req) => {
       if (value === null || value === undefined || value === "") return null;
 
       const mapping = columnLabelsMapping[key];
-      const translatedKey = mapping?.label ?? key;
+      const translatedKey = ASKIT_PREFIX + (mapping?.label ?? key);
       const valueMapping = mapping?.value_mapping;
 
       if (typeof value === "boolean") {
@@ -182,6 +184,12 @@ Deno.serve(async (req) => {
       if (typeof value === "object") return null;
 
       const strVal = String(value);
+      // Handle CSV strings: split, translate each part, rejoin
+      if (valueMapping && strVal.includes(",")) {
+        const parts = strVal.split(",").map((v) => v.trim()).filter(Boolean);
+        const translated = parts.map((v) => valueMapping[v] || v);
+        return { key: translatedKey, value: translated.join(", ") };
+      }
       const translatedValue = (valueMapping && valueMapping[strVal]) || strVal;
       return { key: translatedKey, value: translatedValue };
     }
@@ -206,9 +214,24 @@ Deno.serve(async (req) => {
           ? (answersBlock as Record<string, unknown>)
           : meta;
 
+      // Keys already handled at session level or as native Klaviyo attributes — skip from item enrichment
+      const SESSION_LEVEL_KEYS = new Set(["email", "phone", "optin", "optin_email", "optin_sms", "user_name", "first_name"]);
+
       for (const [key, value] of Object.entries(source)) {
         if (value === null || value === undefined) continue;
         if (key.startsWith("_")) continue; // skip _raw, _recommendations, etc.
+        if (SESSION_LEVEL_KEYS.has(key)) continue; // already handled as session/native attrs
+
+        // Special handling for Q1: split into two separate priority-ordered properties
+        if (key === "Q1" && typeof value === "string" && value.includes(",")) {
+          const q1Mapping = columnLabelsMapping["Q1"]?.value_mapping;
+          const parts = value.split(",").map((v) => v.trim()).filter(Boolean);
+          const first = q1Mapping?.[parts[0]] || parts[0];
+          const second = parts[1] ? (q1Mapping?.[parts[1]] || parts[1]) : null;
+          itemsEnrichmentProps[`${prefix}${ASKIT_PREFIX}Préoccupation principale`] = first;
+          if (second) itemsEnrichmentProps[`${prefix}${ASKIT_PREFIX}Seconde préoccupation`] = second;
+          continue;
+        }
 
         const translated = translateProp(key, value);
         if (translated) {
@@ -217,63 +240,63 @@ Deno.serve(async (req) => {
       }
     });
 
-    // 6. Build properties
+    // 6. Build properties — all prefixed "AskIt — " for easy identification in Klaviyo
+    const P = ASKIT_PREFIX; // "AskIt — "
     const properties: Record<string, unknown> = {
       // Source tag — Klaviyo rejects $source as an attribute, OK as a property
       $source: "Diagnostic Ask-it",
 
       // Identification & Tracking
-      session_code: session.session_code,
-      status: session.status,
-      locale: session.locale,
-      source: session.source,
-      device: session.device,
-      last_diagnostic_date: session.created_at,
-      utm_source: session.utm_source ?? null,
-      utm_medium: session.utm_medium ?? null,
-      utm_campaign: session.utm_campaign ?? null,
-      utm_content: session.utm_content ?? null,
-      utm_term: session.utm_term ?? null,
-      gclid: session.gclid ?? null,
-      fbclid: session.fbclid ?? null,
-      result_url: session.result_url ?? null,
+      [`${P}Session`]: session.session_code,
+      [`${P}Statut`]: session.status === "termine" ? "Terminé" : session.status === "en_cours" ? "En cours" : session.status,
+      [`${P}Langue`]: session.locale,
+      [`${P}Source`]: session.source,
+      [`${P}Appareil`]: session.device,
+      [`${P}Date dernier diagnostic`]: session.created_at,
+      [`${P}UTM Source`]: session.utm_source ?? null,
+      [`${P}UTM Medium`]: session.utm_medium ?? null,
+      [`${P}UTM Campaign`]: session.utm_campaign ?? null,
+      [`${P}UTM Content`]: session.utm_content ?? null,
+      [`${P}UTM Term`]: session.utm_term ?? null,
+      [`${P}GCLID`]: session.gclid ?? null,
+      [`${P}FBCLID`]: session.fbclid ?? null,
+      [`${P}URL résultats`]: session.result_url ?? null,
 
       // Persona & IA
-      persona: personaFullLabel,
-      persona_code: session.persona_code,
-      adapted_tone: session.adapted_tone || null,
-      tone_label: session.tone_label ?? null,
+      [`${P}Persona`]: personaFullLabel,
+      [`${P}Code persona`]: session.persona_code,
+      [`${P}Ton adapté`]: session.adapted_tone || null,
+      [`${P}Label tonalité`]: session.tone_label ?? null,
 
-      ...(session.matching_score !== null && session.matching_score !== undefined && { matching_score: session.matching_score }),
-      ...(session.engagement_score !== null && session.engagement_score !== undefined && { engagement_score: session.engagement_score }),
+      ...(session.matching_score !== null && session.matching_score !== undefined && { [`${P}Matching (%)`]: session.matching_score }),
+      ...(session.engagement_score !== null && session.engagement_score !== undefined && { [`${P}Score engagement (%)`]: session.engagement_score }),
 
       // Business & Conversion
-      conversion_status: session.conversion ? "Oui" : "Non",
-      is_existing_client: session.is_existing_client ? "Oui" : "Non",
-      exit_type: translateExitType(session.exit_type),
+      [`${P}Conversion`]: session.conversion ? "Oui" : "Non",
+      [`${P}Client existant`]: session.is_existing_client ? "Oui" : "Non",
+      [`${P}Type de sortie`]: translateExitType(session.exit_type),
 
-      ...(session.recommended_products && { recommended_products: session.recommended_products }),
-      ...(session.recommended_cart_amount !== null && session.recommended_cart_amount !== undefined && { recommended_cart_amount: session.recommended_cart_amount }),
-      ...(session.upsell_potential && { upsell_potential: translateUpsell(session.upsell_potential) }),
+      ...(session.recommended_products && { [`${P}Produits recommandés`]: session.recommended_products }),
+      ...(session.recommended_cart_amount !== null && session.recommended_cart_amount !== undefined && { [`${P}Montant panier recommandé`]: session.recommended_cart_amount }),
+      ...(session.upsell_potential && { [`${P}Potentiel upsell`]: translateUpsell(session.upsell_potential) }),
 
-      ...(session.validated_products && { validated_products: session.validated_products }),
-      ...(session.validated_cart_amount && { validated_cart_amount: session.validated_cart_amount }),
-      ...(session.selected_cart_amount && { selected_cart_amount: session.selected_cart_amount }),
+      ...(session.validated_products && { [`${P}Produits achetés`]: session.validated_products }),
+      ...(session.validated_cart_amount && { [`${P}Montant panier validé`]: session.validated_cart_amount }),
+      ...(session.selected_cart_amount && { [`${P}Montant panier sélectionné`]: session.selected_cart_amount }),
 
-      // Correct generic column name (NOT existing_client_products)
-      ...(session.existing_brand_products && { existing_brand_products: session.existing_brand_products }),
+      ...(session.existing_brand_products && { [`${P}Produits déjà utilisés`]: session.existing_brand_products }),
 
       // Comportement
-      ...(session.duration_seconds !== null && session.duration_seconds !== undefined && { diagnostic_duration_seconds: session.duration_seconds }),
-      abandoned_at_step: session.abandoned_at_step ?? null,
-      back_navigation_count: session.back_navigation_count ?? null,
-      questions_path: session.question_path ?? null,
+      ...(session.duration_seconds !== null && session.duration_seconds !== undefined && { [`${P}Durée diagnostic (sec)`]: session.duration_seconds }),
+      [`${P}Abandon à l'étape`]: session.abandoned_at_step ?? null,
+      [`${P}Retours en arrière`]: session.back_navigation_count ?? null,
+      [`${P}Chemin questions`]: session.question_path ?? null,
 
       // Opt-in (informational mirrors)
-      optin_email: session.optin_email ? "Oui" : "Non",
-      optin_sms: session.optin_sms ? "Oui" : "Non",
+      [`${P}Opt-in email`]: session.optin_email ? "Oui" : "Non",
+      [`${P}Opt-in SMS`]: session.optin_sms ? "Oui" : "Non",
 
-      // Items — dynamic IA + flattened metadata
+      // Items — dynamic IA + flattened metadata (already prefixed by translateProp)
       ...itemsDynamicProps,
       ...itemsEnrichmentProps,
     };

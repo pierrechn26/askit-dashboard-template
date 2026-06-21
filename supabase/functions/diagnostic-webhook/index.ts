@@ -493,11 +493,34 @@ async function handleNewFormat(supabase: SupabaseClient, payload: any) {
     .eq("session_code", payload.session_code)
     .maybeSingle();
 
+  // ── Reconciliation: if no match by session_code but we have a recent
+  // en_cours session for the same user_name, merge into it instead of
+  // creating a duplicate. Handles diagnostic clients that generate a
+  // different session_code between en_cours pings and the termine ping.
+  let reconciled = existing;
+  if (!existing && payload.status === "termine" && payload.user_name) {
+    const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: candidate } = await supabase
+      .from("diagnostic_sessions")
+      .select("*")
+      .eq("user_name", payload.user_name)
+      .eq("status", "en_cours")
+      .gte("created_at", thirtyMinAgo)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (candidate) {
+      console.log(`[diagnostic-webhook] Reconciling: termine session_code=${payload.session_code} → merging into en_cours session ${candidate.session_code}`);
+      payload.session_code = candidate.session_code;
+      reconciled = candidate;
+    }
+  }
+
   // deno-lint-ignore no-explicit-any
   const coalesce = (field: string, fallback: any = null) => {
     const incoming = payload[field];
     if (incoming !== undefined && incoming !== null) return incoming;
-    if (existing && existing[field] !== undefined && existing[field] !== null) return existing[field];
+    if (reconciled && reconciled[field] !== undefined && reconciled[field] !== null) return reconciled[field];
     return fallback;
   };
 
@@ -510,7 +533,7 @@ async function handleNewFormat(supabase: SupabaseClient, payload: any) {
       existing?.[field]
     );
 
-  const status = protectStatus(existing?.status, payload.status) ?? "en_cours";
+  const status = protectStatus(reconciled?.status, payload.status) ?? "en_cours";
   const conversion = coalesce("conversion", false);
   const abandonedAtStepIncoming = payload.abandoned_at_step === "CLEAR"
     ? null
@@ -543,7 +566,7 @@ async function handleNewFormat(supabase: SupabaseClient, payload: any) {
     adapted_tone: coalesce("adapted_tone"),
     tone_label: coalesce("tone_label"),
     conversion,
-    exit_type: protectExitType(existing?.exit_type, payload.exit_type, computedExit),
+    exit_type: protectExitType(reconciled?.exit_type, payload.exit_type, computedExit),
     existing_brand_products: coalesce("existing_brand_products") ?? coalesce("existing_client_products"),
     is_existing_client: coalesce("is_existing_client", false),
     recommended_cart_amount: coalesce("recommended_cart_amount"),
